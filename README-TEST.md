@@ -13,7 +13,7 @@ Before running the test, ensure the following services are active and port-forwa
 ### Verification Commands:
 ```bash
 # Check Backend
-curl http://localhost:3000/helthcheck
+curl http://localhost:3000/healthcheck
 
 # Check Orchestrator
 curl http://localhost:3001/health

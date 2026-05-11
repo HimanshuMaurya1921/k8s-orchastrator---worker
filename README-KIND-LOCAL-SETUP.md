@@ -41,6 +41,8 @@ You can modify the session behavior by editing the orchestrator deployment or us
 ### Monitoring Lifecycle Events
 Watch the orchestrator logs to see the "Graceful Janitor" in action:
 ```bash
+kubectl rollout restart deployment/orchestrator -n preview
+
 kubectl logs -l app=orchestrator -n preview -f
 ```
 Look for:
