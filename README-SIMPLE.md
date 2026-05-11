@@ -52,7 +52,7 @@ If we just booted a standard Next.js app, it would take a long time. Here is how
 
 9. **Next.js Boot:** The Worker starts the `next dev` background process. 
 
-10. **Smart Polling:** The Frontend doesn't just blindly load the iframe and show an ugly "Bad Gateway" error while Next.js is booting. Instead, it constantly pings the worker's `/__health` endpoint: *"Are you ready yet?"* It shows a beautiful "Syncing..." spinner to the user until Next.js gives the green light.
+10. **Smart Polling (The 90-Second Window):** The Frontend doesn't just blindly load the iframe and show an ugly "Bad Gateway" error while Next.js is booting. Instead, it constantly pings the worker's `/__health` endpoint: *"Are you ready yet?"* It shows a beautiful "Syncing..." spinner to the user. We've synchronized this window to a robust **90 seconds**, ensuring that even on a busy day, the user sees a smooth loading state instead of a crash.
 
 11. **Live Preview:** The Frontend's iframe loads the final URL, and the user sees their website!
 
@@ -87,6 +87,7 @@ To solve this, the Worker detects a "Wipe" command and does the following:
 
 Cloud computing costs money. We cannot keep Sandbox Pods running forever if the user closes their laptop and goes to sleep. We also cannot let AI-generated code hack our network.
 
-1. **No Outbound Traffic (Security):** The Pods are locked in a Kubernetes `NetworkPolicy`. They cannot access the open internet (except to resolve DNS). If the AI accidentally generates malicious code, it cannot hack out of the sandbox to steal data or mine crypto.
-2. **The 30-Minute Janitor (CronJob):** A Kubernetes `CronJob` wakes up every single minute. It looks at the creation time of all Pods. If a Pod has been alive for more than 30 minutes, the Janitor mercilessly deletes it (`kubectl delete pod`). 
-3. **Self-Healing Orchestrator:** If the Orchestrator notices a Pod was deleted by the Janitor, it cleans up the Redis database, ensuring no "ghost sessions" exist. The next time the user comes back, they seamlessly get a fresh Cold Start.
+1. **No Outbound Traffic (Security):** The Pods are locked in a Kubernetes `NetworkPolicy`. They cannot access the open internet. If the AI accidentally generates malicious code, it cannot hack out of the sandbox to steal data or mine crypto.
+2. **The 30-Second Grace Period (Janitor):** When a user closes their tab, we don't kill their sandbox immediately. Instead, we start a **30-second countdown**. If they accidentally closed the tab or their browser crashed, they can simply reopen it within 30 seconds and find their session exactly where they left it. This is our "Graceful Janitor" logic.
+3. **The 30-Minute Safety TTL:** Even if a user leaves the tab open, a session will eventually "expire" after 30 minutes of inactivity to keep our costs low and our cluster clean.
+4. **Self-Healing Orchestrator:** The Orchestrator constantly reconciles its brain (Redis) with reality (Kubernetes). If a pod disappears for any reason, the Orchestrator automatically cleans up the mess, ensuring no "ghost sessions" waste our resources.

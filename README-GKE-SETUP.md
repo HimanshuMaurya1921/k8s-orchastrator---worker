@@ -87,6 +87,7 @@ kubectl create secret generic preview-worker-secret \
 kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/network-policy.yaml
 kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/cronjob.yaml
 
 # 4. Deploy Orchestrator
 # (Make sure to update the image paths in orchestrator-deployment.yaml)
@@ -99,7 +100,13 @@ The system is optimized for high-density Next.js workloads. We recommend a "burs
 - **Limits**: 1.0 CPU / 1Gi RAM
 - **Storage**: 2Gi `emptyDir` (Memory) for high-speed workspace I/O.
 
-## 7. Production Networking Considerations
+## 7. Production Tuning (Environment Variables)
+For production workloads, you must tune the lifecycle and timeout settings in the Orchestrator deployment:
+
+- **`TERMINATION_GRACE_PERIOD_SECONDS=30`**: Essential to prevent HMR disconnects or refresh-loop pod kills.
+- **`JANITOR_PULSE_INTERVAL_MS=10000`**: Balance between cleanup speed and Redis load.
+- **`BOOT_TIMEOUT_MS=90000`**: High value recommended for GKE to account for image pulls and cold starts.
+- **`SESSION_TTL_SECONDS=1800`**: Controls how long inactive session metadata persists in Redis.
 
 ### 6.1 Session Affinity (Sticky Sessions)
 The Orchestrator uses a `preview-worker-id` cookie to route Next.js assets to the correct pod.

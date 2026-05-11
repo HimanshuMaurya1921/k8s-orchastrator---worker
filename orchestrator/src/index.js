@@ -13,9 +13,13 @@ const backend = IS_GKE
   ? require('./k8sClient')
   : require('./localWorker');
 
-module.exports = function() {
+module.exports = function () {
   const router = express.Router();
   const AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN;
+
+  // Senior Fix: Use environment variables for grace periods and intervals
+  const GRACE_PERIOD = parseInt(process.env.TERMINATION_GRACE_PERIOD_SECONDS || '30', 10);
+  const PULSE_INTERVAL = parseInt(process.env.JANITOR_PULSE_INTERVAL_MS || '10000', 10);
 
   // Reconcile sessions on startup
   (async () => {
@@ -33,13 +37,16 @@ module.exports = function() {
   router.post('/start', async (req, res) => {
     const { projectId, userId, files } = req.body;
     const sessionKey = userId || projectId;
-    
+
     if (!sessionKey) return res.status(400).json({ error: 'Missing userId or projectId' });
     if (!files) return res.status(400).json({ error: 'files required' });
 
     // ─── Warm Update Logic ───
     const existing = await sessionManager.getSessionByProject(sessionKey);
     if (existing) {
+      // Senior Fix: If session was pending termination, cancel it!
+      await sessionManager.confirmSession(existing.workerId);
+
       console.log(`[Orchestrator] Existing session found for ${sessionKey}. Verifying health...`);
       try {
         const isRunning = await backend.isWorkerRunning(existing.workerId);
@@ -54,10 +61,10 @@ module.exports = function() {
 
         if (injectRes.ok) {
           console.log(`[Orchestrator] Warm update for ${existing.workerId} took ${Date.now() - injectStart}ms`);
-          return res.json({ 
-            workerId: existing.workerId, 
+          return res.json({
+            workerId: existing.workerId,
             previewUrl: `http://localhost:${process.env.WORKER_PORT || 3001}/api/preview/proxy/${existing.workerId}/`,
-            warm: true 
+            warm: true
           });
         }
       } catch (err) {
@@ -66,7 +73,7 @@ module.exports = function() {
         try {
           if (IS_GKE) await backend.deletePreviewPod(existing.workerId);
           else await backend.deleteLocalWorker(existing.workerId);
-        } catch (deleteErr) {}
+        } catch (deleteErr) { }
         await sessionManager.deleteSession(existing.workerId);
         // Fall through to cold start
       }
@@ -108,16 +115,16 @@ module.exports = function() {
 
       if (!injectRes.ok) throw new Error(`Inject failed: ${await injectRes.text()}`);
 
-      await sessionManager.setSession(sessionKey, { 
-        workerId, 
-        workerHost, 
-        workerPort, 
-        projectId: sessionKey, 
-        userId 
+      await sessionManager.setSession(sessionKey, {
+        workerId,
+        workerHost,
+        workerPort,
+        projectId: sessionKey,
+        userId
       });
-      
-      res.json({ 
-        workerId, 
+
+      res.json({
+        workerId,
         previewUrl: `http://localhost:${process.env.WORKER_PORT || 3001}/api/preview/proxy/${workerId}/`,
         warm: false
       });
@@ -158,12 +165,45 @@ module.exports = function() {
   const cleanupHandler = async (req, res) => {
     const { workerId } = req.params;
     try {
-      if (IS_GKE) await backend.deletePreviewPod(workerId);
-      else await backend.deleteLocalWorker(workerId);
-      await sessionManager.deleteSession(workerId);
-    } catch (err) {}
-    res.json({ ok: true });
+      // Senior Update: Don't kill instantly, request graceful termination
+      await sessionManager.requestTermination(workerId, GRACE_PERIOD);
+      res.json({ ok: true, note: `Grace period started (${GRACE_PERIOD}s)` });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   };
+
+  // ─── The Graceful Janitor ───────────────────────────────────────────────────
+  // Periodically checks for sessions whose grace period has expired
+  setInterval(async () => {
+    try {
+      const terminating = await sessionManager.getTerminatingSessions();
+
+      // Heartbeat log: only log if there's action to keep logs clean
+      if (terminating.length > 0) {
+        console.log(`[Janitor] Pulse: Checking ${terminating.length} terminating sessions...`);
+      }
+
+      for (const session of terminating) {
+        const expired = await sessionManager.isGraceExpired(session.workerId);
+        if (expired) {
+          console.log(`[Janitor] 💀 Grace period expired for ${session.workerId}. Terminating pod...`);
+          try {
+            if (IS_GKE) await backend.deletePreviewPod(session.workerId);
+            else await backend.deleteLocalWorker(session.workerId);
+            console.log(`[Janitor] ✅ Pod ${session.workerId} deleted successfully.`);
+          } catch (deleteErr) {
+            console.error(`[Janitor] ❌ Failed to delete pod ${session.workerId}:`, deleteErr.message);
+          }
+          await sessionManager.deleteSession(session.workerId);
+        } else {
+          console.log(`[Janitor] ⏳ ${session.workerId} is still in grace period.`);
+        }
+      }
+    } catch (err) {
+      console.error("[Janitor] Critical error in background task:", err.message);
+    }
+  }, PULSE_INTERVAL); // Dynamic check interval
 
   router.delete('/:workerId', cleanupHandler);
   router.post('/:workerId/delete', cleanupHandler);
@@ -210,7 +250,7 @@ module.exports = function() {
   router.use('/proxy/:workerId', async (req, res, next) => {
     const { workerId } = req.params;
     const session = await sessionManager.getSessionByWorker(workerId);
-    
+
     if (!session) {
       console.warn(`[Proxy] Session NOT FOUND for workerId: ${workerId}`);
       return res.status(404).send('Preview not found or expired');

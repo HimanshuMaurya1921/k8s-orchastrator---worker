@@ -58,11 +58,14 @@ Open your Grafana dashboard (`http://localhost:3002`) and observe:
 - If you see `200` status codes during the blast, the proxy is stable.
 - If you see `502` or `503`, the orchestrator or workers are overwhelmed.
 
-### 3. Cleanup Logic (The "Good Citizen" Test)
+### 3. Cleanup Logic (The "Graceful Janitor" Test)
 1. Open the frontend and generate a preview.
 2. Verify the pod is `Running`.
 3. Close the browser tab.
-4. Verify the pod enters `Terminating` state immediately (via `sendBeacon` cleanup).
+4. Verify the Orchestrator logs show `Graceful termination requested`.
+5. Wait 30 seconds (the `TERMINATION_GRACE_PERIOD_SECONDS`).
+6. Verify the pod is finally deleted by the Janitor.
+7. **Test Cancellation**: Close the tab, wait 10s, then reopen the page for the same project. The logs should show `Termination CANCELLED`.
 
 ---
 
@@ -93,5 +96,5 @@ Increase the `MAX_PREVIEW_PODS` to 10 and run the load test for 15 pods. The orc
 ## ❓ Troubleshooting
 
 - **❌ Failed (Empty Error)**: The orchestrator port-forward is likely dead. Restart it.
-- **❌ Failed: Pod did not become ready**: Next.js is taking too long to boot. Increase `BOOT_TIMEOUT_MS` in the orchestrator environment or check if your machine has enough CPU.
+- **❌ Failed: Pod did not become ready**: Next.js is taking too long to boot. The system has a synchronized **90s timeout**. If your machine is under heavy load, increase `BOOT_TIMEOUT_MS` in the orchestrator.
 - **❌ Error: Could not fetch files**: The backend server is not running on port 3000.

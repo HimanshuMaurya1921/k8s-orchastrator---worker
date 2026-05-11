@@ -59,13 +59,13 @@ export function usePreview({ projectId, files, apiBase = '', onReady }) {
           localStorage.setItem('preview_user_id', userId);
         }
 
-        // Set a fail-safe timeout: if we're still booting after 60s, something is wrong
+        // Set a fail-safe timeout: if we're still booting after 90s, something is wrong
         const failSafeId = setTimeout(() => {
           if (loading || !workerId) {
             setLoading(false);
             setError('Preview boot timed out. The pod might be overloaded. Please try again.');
           }
-        }, 60000);
+        }, 90000);
 
         // Always use /start to trigger Orchestrator's reuse logic
         const res = await fetch(`${apiBase}/api/preview/start`, {
@@ -91,7 +91,7 @@ export function usePreview({ projectId, files, apiBase = '', onReady }) {
         // Don't update the iframe URL until the worker explicitly says Next.js is ready
         let isReady = false;
         let attempts = 0;
-        const maxAttempts = 30; // 30s max wait
+        const maxAttempts = 90; // 90s max wait (matched to BOOT_TIMEOUT_MS)
         
         while (!isReady && attempts < maxAttempts) {
           try {

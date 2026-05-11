@@ -35,11 +35,11 @@ class SessionManager {
    */
   async setSession(projectId, sessionData) {
     const { workerId } = sessionData;
-    const dataStr = JSON.stringify(sessionData);
 
     await this.redis.multi()
       .set(`session:project:${projectId}`, workerId, 'EX', this.ttl)
-      .set(`session:worker:${workerId}`, dataStr, 'EX', this.ttl)
+      .hset(`session:worker:${workerId}`, { ...sessionData, status: 'active' })
+      .expire(`session:worker:${workerId}`, this.ttl)
       .exec();
     
     console.log(`[Session] Saved session for project ${projectId} (worker: ${workerId})`);
@@ -55,11 +55,95 @@ class SessionManager {
   }
 
   /**
+   * Request a graceful termination (starts a timer)
+   */
+  async requestTermination(workerId, graceSeconds = 15) {
+    const session = await this.getSessionByWorker(workerId);
+    if (!session) return;
+
+    console.log(`[Session] ⏳ Graceful termination requested for ${workerId}. Waiting ${graceSeconds}s...`);
+    
+    await this.redis.multi()
+      .hset(`session:worker:${workerId}`, 'status', 'terminating')
+      .set(`grace:${workerId}`, 'pending', 'EX', graceSeconds)
+      .exec();
+  }
+
+  /**
+   * Confirm session is still active (cancels termination)
+   */
+  async confirmSession(workerId) {
+    const session = await this.getSessionByWorker(workerId);
+    if (!session || session.status !== 'terminating') return false;
+
+    console.log(`[Session] ✨ Termination CANCELLED for ${workerId}. User returned!`);
+    
+    await this.redis.multi()
+      .hset(`session:worker:${workerId}`, 'status', 'active')
+      .del(`grace:${workerId}`)
+      .exec();
+    
+    return true;
+  }
+
+  /**
+   * Get all sessions that are currently in 'terminating' state
+   */
+  async getTerminatingSessions() {
+    try {
+      const terminating = [];
+      const stream = this.redis.scanStream({ match: 'session:worker:*', count: 100 });
+
+      for await (const keys of stream) {
+        if (keys.length === 0) continue;
+        
+        const pipe = this.redis.pipeline();
+        keys.forEach(key => pipe.hgetall(key));
+        const results = await pipe.exec();
+
+        results.forEach(([err, session], index) => {
+          if (err || !session || Object.keys(session).length === 0) return;
+          
+          const workerId = session.workerId || keys[index].split(':').pop();
+          if (session.status === 'terminating') {
+            if (session.workerPort) session.workerPort = parseInt(session.workerPort, 10);
+            terminating.push({ ...session, workerId });
+          }
+        });
+      }
+      return terminating;
+    } catch (err) {
+      console.error(`[Session] Error fetching terminating sessions: ${err.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Check if the grace period for a worker has expired
+   */
+  async isGraceExpired(workerId) {
+    const exists = await this.redis.exists(`grace:${workerId}`);
+    return exists === 0;
+  }
+
+  /**
    * Get session data by worker ID
    */
   async getSessionByWorker(workerId) {
-    const data = await this.redis.get(`session:worker:${workerId}`);
-    return data ? JSON.parse(data) : null;
+    try {
+      const data = await this.redis.hgetall(`session:worker:${workerId}`);
+      if (!data || Object.keys(data).length === 0) return null;
+      
+      // Redis hash values are strings, convert numbers back
+      if (data.workerPort) data.workerPort = parseInt(data.workerPort, 10);
+      return data;
+    } catch (err) {
+      if (err.message.includes('WRONGTYPE')) {
+        console.warn(`[Session] Legacy string key detected for worker ${workerId}. Marking as invalid.`);
+        return null;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -81,14 +165,23 @@ class SessionManager {
    * List all active sessions (expensive, use with care)
    */
   async listSessions() {
-    const keys = await this.redis.keys('session:worker:*');
-    if (keys.length === 0) return [];
-    
-    const pipe = this.redis.pipeline();
-    keys.forEach(key => pipe.get(key));
-    const results = await pipe.exec();
-    
-    return results.map(([err, val]) => JSON.parse(val)).filter(Boolean);
+    const sessions = [];
+    const stream = this.redis.scanStream({ match: 'session:worker:*', count: 100 });
+
+    for await (const keys of stream) {
+      if (keys.length === 0) continue;
+
+      const pipe = this.redis.pipeline();
+      keys.forEach(key => pipe.hgetall(key));
+      const results = await pipe.exec();
+
+      results.forEach(([err, val]) => {
+        if (err || !val || Object.keys(val).length === 0) return;
+        if (val.workerPort) val.workerPort = parseInt(val.workerPort, 10);
+        sessions.push(val);
+      });
+    }
+    return sessions;
   }
 
   /**
@@ -96,14 +189,21 @@ class SessionManager {
    * This clears stale Redis keys that don't have corresponding pods/containers
    */
   async reconcile(activeWorkerIds) {
-    const keys = await this.redis.keys('session:worker:*');
     const activeSet = new Set(activeWorkerIds);
+    const stream = this.redis.scanStream({ match: 'session:worker:*', count: 100 });
 
-    for (const key of keys) {
-      const workerId = key.replace('session:worker:', '');
-      if (!activeSet.has(workerId)) {
-        console.log(`[Session] Cleaning up stale Redis session: ${workerId}`);
-        await this.deleteSession(workerId);
+    for await (const keys of stream) {
+      for (const key of keys) {
+        const workerId = key.replace('session:worker:', '');
+        if (!activeSet.has(workerId)) {
+          console.log(`[Session] Cleaning up stale or legacy Redis session: ${workerId}`);
+          try {
+            await this.deleteSession(workerId);
+            await this.redis.del(key);
+          } catch (err) {
+            console.error(`[Session] Failed to clean up key ${key}:`, err.message);
+          }
+        }
       }
     }
   }

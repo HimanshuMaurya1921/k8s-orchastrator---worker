@@ -1,76 +1,48 @@
-# AI Studio Preview System (Refactored)
+# AI Studio Preview System (Hardened)
 
-A high-performance, Kubernetes-native preview infrastructure for Next.js and Vite applications. This system allows you to spin up ephemeral sandbox environments for live previews with support for file injection and HMR.
+A high-performance, Kubernetes-native preview infrastructure for Next.js and Vite applications. This system provides ephemeral sandbox environments with support for atomic file injection and sub-second HMR.
 
-## 🏗 Architecture
+## 🏗 Architecture (Senior Refactored)
 
-The system consists of three main components:
+The system consists of three main components, now hardened for production-grade reliability:
 
-1.  **Frontend**: A React-based dashboard that generates code and manages preview sessions.
-2.  **Orchestrator**: A thin Node.js session router that interacts with the Kubernetes API to manage preview pods. It uses Redis for state management.
-3.  **Sandbox Worker**: A specialized container image that runs the Next.js dev server and handles live file injections.
-
-```text
-Browser Editor
-    ↓ websocket / fetch
-Thin Session Manager (Orchestrator)
-    ↓
-Kubernetes API / Redis
-    ↓
-Sandbox Pod (Worker)
-    ↓
-Vite/Next.js Dev Server
-    ↓
-Reverse Proxy (Sticky Session)
-    ↓
-iframe Preview
-```
+1.  **Frontend**: A React dashboard that implements readiness polling and reliable `sendBeacon` session termination.
+2.  **Orchestrator**: A high-concurrency Node.js router that manages the pod lifecycle via the K8s API. Standardized on **Redis Hashes** for state management and features a non-blocking "Graceful Janitor".
+3.  **Sandbox Worker**: A specialized container image running the Next.js dev server, optimized with `tmpfs` workspace storage and `node_modules` symlinking.
 
 ## 🚀 Key Features
 
-- **Kubernetes-Native**: Leverages K8s for scheduling, resource isolation, and lifecycle management.
-- **Atomic Project Swaps**: Implements a robust `Stop-Wipe-Inject-Restart` lifecycle (Worker v1.0.2+) to ensure 100% clean state between project updates.
-- **Readiness-Aware Proxying**: The orchestrator automatically handles transient boot-up windows, serving a graceful "Syncing" state instead of proxy errors.
-- **Observability Stack**: Integrated with **Prometheus & Grafana** for real-time CPU/Memory tracking and OOMKill alerting.
-- **Cost Optimized**: Features a "Good Citizen" cleanup logic (Tab Close -> Pod Delete) and an automated TTL CronJob.
-- **High Performance**: Uses `emptyDir` (Memory) for workspace storage and optimized resource limits.
-- **Stress Tested**: Verified to handle high-concurrency bursts (750+ requests/min) through a dedicated stress testing suite.
+- **Kubernetes-Native**: Scheduled on dedicated `preview-pool` nodes with strict resource isolation.
+- **Warm Update Logic**: Reuses existing pods for the same project/user to achieve sub-second code updates.
+- **Graceful Termination**: Implements a configurable **30s grace period** (via Janitor) to prevent unnecessary pod restarts during browser refreshes.
+- **Synchronized Timeouts**: Frontend and Backend are aligned on a **90s boot window** for high reliability.
+- **Observability**: Integrated with Prometheus/Grafana for OOMKill detection and cost tracking.
 
-## 📁 Project Structure
+## ⚙️ Configuration (Orchestrator)
 
-- `/backend`: Sample code provider (React/Next.js templates).
-- `/frontend`: The web interface with built-in readiness polling and `sendBeacon` cleanup.
-- `/orchestrator`: Session management and proxying logic.
-- `/preview-worker`: The hardened sandbox runner (v1.0.2).
-- `/monitoring-stack`: Prometheus rules and Grafana dashboard configs.
-- `/k8s`: Kubernetes manifests for GKE/Kind.
-- `/scratch`: Stress testing and load generation scripts.
-
-## 🛠 Setup Guides
-
-- [GKE Production Setup](./README-GKE-SETUP.md)
-- [Local Development with Kind](./README-KIND-LOCAL-SETUP.md)
-- [Monitoring & Alerting Setup](./monitoring-stack/MONITORING.md)
-- [Load & Stress Testing](./README-TEST.md)
-
-> [!IMPORTANT]
-> All Kubernetes resources are deployed in the `preview` namespace. Always use the `-n preview` flag when running `kubectl` commands.
-
-## ⚙️ Environment Variables (Orchestrator)
+The system is now fully configurable via environment variables (see `.env.example`):
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `RUNTIME` | `gke` or `local` | `local` |
-| `REDIS_HOST` | Redis server address | `redis.preview.svc.cluster.local` |
-| `WORKER_IMAGE` | Docker image for the sandbox worker | `preview-worker:local` |
-| `WORKER_AUTH_TOKEN` | Shared secret for internal communication | (auto-generated) |
-| `SESSION_TTL_SECONDS` | How long to keep a session alive | `1800` |
+| `TERMINATION_GRACE_PERIOD_SECONDS` | Seconds to wait before killing a pod after tab close | `30` |
+| `JANITOR_PULSE_INTERVAL_MS` | How often the janitor checks for expired sessions | `10000` |
+| `BOOT_TIMEOUT_MS` | Max wait for a pod/Next.js to become ready | `90000` |
 | `MAX_PREVIEW_PODS` | Maximum concurrent previews allowed | `40` |
-| `BOOT_TIMEOUT_MS` | Max wait for Next.js to become ready | `90000` |
+| `SESSION_TTL_SECONDS` | Absolute expiration for Redis session data | `1800` |
 
-## 🛡 Stability & Reliability (Senior Dev Note)
+## 📁 Project Structure
 
-The system is now hardened against common Next.js/K8s issues:
-1. **Zombie Processes**: Uses aggressive `pkill -9` cleanup during swaps.
-2. **Port Resilience**: Includes a 500ms safety cooldown for port `3001` release.
-3. **Readiness Polling**: The frontend waits for the `/__health` ready signal before showing the app.
+- `/orchestrator`: Session management with non-blocking Redis iteration.
+- `/preview-worker`: Hardened sandbox runner (v1.0.2).
+- `/frontend`: React client with synchronized 90s timeouts.
+- `/monitoring-stack`: Prometheus rules and Grafana dashboards.
+- `/k8s`: Kubernetes manifests for GKE/Kind.
+
+## 🛠 Setup Guides
+
+- [Local Development with Kind](./README-KIND-LOCAL-SETUP.md)
+- [GKE Production Setup](./README-GKE-SETUP.md)
+- [Frontend Integration Guide](./README-FRONTEND.md)
+
+---
+*Senior Developer Note: The system has been hardened against Redis WRONGTYPE errors and blocking operations. Always ensure your environment variables are set correctly before deployment.*
