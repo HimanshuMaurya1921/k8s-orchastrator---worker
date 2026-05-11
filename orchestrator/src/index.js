@@ -62,6 +62,11 @@ module.exports = function() {
         }
       } catch (err) {
         console.warn(`[Orchestrator] Session health check failed for ${existing.workerId}: ${err.message}`);
+        // Senior Fix: Don't just delete from Redis, kill the pod too!
+        try {
+          if (IS_GKE) await backend.deletePreviewPod(existing.workerId);
+          else await backend.deleteLocalWorker(existing.workerId);
+        } catch (deleteErr) {}
         await sessionManager.deleteSession(existing.workerId);
         // Fall through to cold start
       }

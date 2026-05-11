@@ -142,20 +142,26 @@ export function usePreview({ projectId, files, apiBase = '', onReady }) {
     return () => clearTimeout(timeout);
   }, [files, workerId, projectId, apiBase, onReady]);
 
-  // Reliable Cleanup on Unmount
+  // Reliable Cleanup on Unmount & Tab Close
   useEffect(() => {
-    return () => {
+    const cleanup = () => {
       const id = workerIdRef.current;
       const base = apiBaseRef.current;
       
       if (id && base) {
         console.log(`[usePreview] Cleaning up worker: ${id}`);
-        // Use keepalive to ensure the request finishes even if the tab is closing
-        fetch(`${base}/api/preview/${id}`, {
-          method: 'DELETE',
-          keepalive: true
-        }).catch(() => {});
+        // Use the /delete POST endpoint with sendBeacon for maximum reliability
+        const url = `${base}/api/preview/${id}/delete`;
+        navigator.sendBeacon(url);
       }
+    };
+
+    window.addEventListener('beforeunload', cleanup);
+
+    // Handle component unmount
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+      cleanup();
     };
   }, []); // empty array — intentional
 

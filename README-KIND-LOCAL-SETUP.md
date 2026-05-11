@@ -35,6 +35,7 @@ Apply the Kubernetes manifests. **Note: We use the `preview` namespace for all r
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/cronjob.yaml
 
 # 2. Create Secrets
 kubectl create secret generic preview-worker-secret \

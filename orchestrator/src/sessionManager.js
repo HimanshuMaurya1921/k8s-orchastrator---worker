@@ -63,7 +63,7 @@ class SessionManager {
   }
 
   /**
-   * Delete session
+   * Delete session in redis only
    */
   async deleteSession(workerId) {
     const session = await this.getSessionByWorker(workerId);
