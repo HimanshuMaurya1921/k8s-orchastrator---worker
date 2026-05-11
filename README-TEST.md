@@ -29,62 +29,64 @@ kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3002:80
 
 We use a bash script to simulate multiple users requesting previews simultaneously.
 
+---
+
+## 🏃‍♂️ Step 2: High-Concurrency Stress Test
+
+For a "Real World" test, use the stress script. It blasts each pod with 50 requests in parallel through the orchestrator.
+
 ```bash
 # Make the script executable
-chmod +x scratch/load_test.sh
+chmod +x scratch/stress_test.sh
 
-# Run the test (creates 15 pods)
-./scratch/load_test.sh
+# Run the test (15 pods x 50 requests = 750 total)
+./scratch/stress_test.sh
 ```
 
 ---
 
-## 📊 Step 2: What to Watch (Monitoring)
+## 📊 Step 3: What to Watch (Monitoring)
 
-Open your Grafana dashboard (`http://localhost:3002`) and observe the following:
+Open your Grafana dashboard (`http://localhost:3002`) and observe:
 
-### 1. Pod Count & Memory Usage
-- **Metric**: `count(kube_pod_status_phase{phase="Running", namespace="preview"})`
-- **What to look for**: A sharp "staircase" climb in the number of running pods and total memory consumption.
+### 1. CPU & Memory Surges
+- **CPU**: Watch for the `preview` namespace hitting 5.0+ cores during the 750-request blast.
+- **Memory**: Ensure memory doesn't cross the `Limit` (4GB or 2GB) and trigger OOMKills.
 
-### 2. OOMKill Alerts
-- **Metric**: `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`
-- **Test**: If you have set a low memory limit (e.g., 512Mi), watch for alerts in **Alertmanager** (`http://localhost:9093`) or the Red "Critical" status in Grafana.
+### 2. Success Rate (Orchestrator Logs)
+- Run `kubectl logs -l app=orchestrator -n preview --tail=100`
+- If you see `200` status codes during the blast, the proxy is stable.
+- If you see `502` or `503`, the orchestrator or workers are overwhelmed.
 
-### 3. Orchestrator Latency
-- Watch the orchestrator logs: `kubectl logs -l app=orchestrator -n preview --tail=50`
-- Look for `[Orchestrator] Code patch for ... took Xms`. If X increases significantly, the cluster might be under high I/O pressure.
+### 3. Cleanup Logic (The "Good Citizen" Test)
+1. Open the frontend and generate a preview.
+2. Verify the pod is `Running`.
+3. Close the browser tab.
+4. Verify the pod enters `Terminating` state immediately (via `sendBeacon` cleanup).
 
 ---
 
-## 🧹 Step 3: Cleanup
-
-After testing, you should delete the temporary pods to free up cluster resources.
+## 🧹 Step 4: Cleanup
 
 ```bash
 # Delete all preview pods
 kubectl delete pods -l app=preview-worker -n preview
-
-# Clear the Redis sessions (Optional)
-# This happens automatically when pods are deleted if reconcile is active
 ```
 
 ---
 
 ## 🧪 Advanced: Testing Different Scenarios
 
-### A. Testing Warm Updates
-Run the load test twice without cleaning up. The second run should be much faster because the orchestrator will reuse the existing pods ("Warm Update").
-
-### B. Testing OOM Crashes
+### A. Testing OOM Crashes
 1. Edit `orchestrator/src/k8sClient.js`.
 2. Set `limits: { memory: '256Mi' }`.
 3. Rebuild orchestrator and restart.
 4. Run load test.
 5. Watch the pods crash in `kubectl get pods -n preview`.
+6. Verify the **PodOOMKilled** alert fires in Alertmanager (`http://localhost:9093`).
 
-### C. Testing Cluster Fullness
-Increase the `COUNT` in `load_test.sh` to 50. The orchestrator should eventually return `503 Service Unavailable` once it hits the `MAX_PREVIEW_PODS` limit.
+### B. Testing Cluster Fullness
+Increase the `MAX_PREVIEW_PODS` to 10 and run the load test for 15 pods. The orchestrator should return `503 Service Unavailable` with a "Cluster Full" message.
 
 ---
 

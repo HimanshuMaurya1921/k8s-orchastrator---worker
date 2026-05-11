@@ -9,8 +9,8 @@ const os = require('os');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const PORT = 3000;
-const NEXT_PORT = 3001;
+const PORT = process.env.PORT || 3000;
+const NEXT_PORT = process.env.NEXT_PORT || 3001;
 const WORKSPACE = process.env.WORKSPACE || path.join(os.tmpdir(), `ai-studio-worker`);
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'local-dev-token';
 const VERSION = "1.0.2"; 

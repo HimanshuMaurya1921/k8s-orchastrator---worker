@@ -45,14 +45,31 @@ kubectl create secret generic preview-worker-secret \
 # 3. Deploy Orchestrator and policies
 kubectl apply -f k8s/network-policy.yaml
 kubectl apply -f k8s/orchestrator-deployment.yaml
+
+# 4. Install Monitoring Stack (Optional but Recommended)
+# This installs Prometheus, Grafana, and OOMKill Alerts
+kubectl create namespace monitoring
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  -f monitoring-stack/monitoring-values.yaml
 ```
 
-## 5. Connecting to the Orchestrator
-Since the Orchestrator runs inside the `preview` namespace in KIND, you must use the `-n preview` flag and port-forward the service:
+## 5. Accessing the Services
+
+Since services run inside KIND, you must port-forward them to your host machine:
 
 ```bash
-# Port-forward the orchestrator service to localhost:3001
+# 1. Orchestrator (Preview API)
 kubectl port-forward svc/orchestrator -n preview 3001:80
+
+# 2. Grafana (Dashboards)
+# User: admin / Pass: admin
+kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3002:80
+
+# 3. Alertmanager (OOMKill Alerts)
+kubectl port-forward svc/kube-prometheus-stack-alertmanager -n monitoring 9093:9093
 ```
 
 > [!TIP]

@@ -31,23 +31,27 @@ iframe Preview
 - **Kubernetes-Native**: Leverages K8s for scheduling, resource isolation, and lifecycle management.
 - **Atomic Project Swaps**: Implements a robust `Stop-Wipe-Inject-Restart` lifecycle (Worker v1.0.2+) to ensure 100% clean state between project updates.
 - **Readiness-Aware Proxying**: The orchestrator automatically handles transient boot-up windows, serving a graceful "Syncing" state instead of proxy errors.
-- **Memory Efficiency**: Optimized to run at a consistent **~60MB RSS baseline** with automated Garbage Collection.
-- **Warm Pod Reuse**: Detects existing sessions for the same project/user to avoid cold start times.
+- **Observability Stack**: Integrated with **Prometheus & Grafana** for real-time CPU/Memory tracking and OOMKill alerting.
+- **Cost Optimized**: Features a "Good Citizen" cleanup logic (Tab Close -> Pod Delete) and an automated TTL CronJob.
 - **High Performance**: Uses `emptyDir` (Memory) for workspace storage and optimized resource limits.
+- **Stress Tested**: Verified to handle high-concurrency bursts (750+ requests/min) through a dedicated stress testing suite.
 
 ## 📁 Project Structure
 
 - `/backend`: Sample code provider (React/Next.js templates).
-- `/frontend`: The web interface with built-in readiness polling.
+- `/frontend`: The web interface with built-in readiness polling and `sendBeacon` cleanup.
 - `/orchestrator`: Session management and proxying logic.
 - `/preview-worker`: The hardened sandbox runner (v1.0.2).
+- `/monitoring-stack`: Prometheus rules and Grafana dashboard configs.
 - `/k8s`: Kubernetes manifests for GKE/Kind.
+- `/scratch`: Stress testing and load generation scripts.
 
 ## 🛠 Setup Guides
 
 - [GKE Production Setup](./README-GKE-SETUP.md)
 - [Local Development with Kind](./README-KIND-LOCAL-SETUP.md)
-- [Frontend Development](./README-FRONTEND.md)
+- [Monitoring & Alerting Setup](./monitoring-stack/MONITORING.md)
+- [Load & Stress Testing](./README-TEST.md)
 
 > [!IMPORTANT]
 > All Kubernetes resources are deployed in the `preview` namespace. Always use the `-n preview` flag when running `kubectl` commands.
@@ -57,10 +61,12 @@ iframe Preview
 | Variable | Description | Default |
 | :--- | :--- | :--- |
 | `RUNTIME` | `gke` or `local` | `local` |
-| `REDIS_HOST` | Redis server address | `localhost` |
+| `REDIS_HOST` | Redis server address | `redis.preview.svc.cluster.local` |
 | `WORKER_IMAGE` | Docker image for the sandbox worker | `preview-worker:local` |
 | `WORKER_AUTH_TOKEN` | Shared secret for internal communication | (auto-generated) |
-| `SESSION_TTL_SECONDS` | How long to keep a session alive | `3600` |
+| `SESSION_TTL_SECONDS` | How long to keep a session alive | `1800` |
+| `MAX_PREVIEW_PODS` | Maximum concurrent previews allowed | `40` |
+| `BOOT_TIMEOUT_MS` | Max wait for Next.js to become ready | `90000` |
 
 ## 🛡 Stability & Reliability (Senior Dev Note)
 

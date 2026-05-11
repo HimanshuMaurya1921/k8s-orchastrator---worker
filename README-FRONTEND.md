@@ -50,10 +50,28 @@ The Orchestrator may return a `status: "expired"` if the pod was reaped by the T
 - **Requirement**: If `data.status === "expired"`, the frontend MUST clear the current `workerId` and re-trigger the `/start` call immediately.
 - **User Feedback**: Update loading text to "Session expired, re-booting..." during this phase.
 
+### 2.6 Cleanup Protocol (The "Good Citizen" Logic)
+To keep cluster costs low, the frontend MUST signal when a preview session is no longer needed (e.g., when the user leaves the page or closes the tab).
+
+- **Implementation**: Use a `useEffect` cleanup hook combined with `navigator.sendBeacon`.
+- **Reasoning**: `sendBeacon` is more reliable than `fetch` during page dismissal as it bypasses CORS preflights and is guaranteed to finish by the browser.
+- **Endpoint**: `${WORKER_URL}/api/preview/${workerId}/delete` (POST)
+
+```javascript
+useEffect(() => {
+  return () => {
+    if (workerId && apiBase) {
+      const url = `${apiBase}/api/preview/${workerId}/delete`;
+      navigator.sendBeacon(url);
+    }
+  };
+}, [workerId]);
+```
+
 ## 3. Networking & Security
-- **WebSockets**: The preview URL MUST be loaded in an environment that allows WebSocket connections (for HMR).
+- **WebSockets**: The preview URL MUST be loaded in an environment that allows WebSocket connections (for HMR). The Orchestrator handles the WS `Upgrade` handshake automatically.
 - **Cookies**: The Orchestrator sets a `preview-worker-id` cookie for asset routing. Ensure the frontend does not block `SameSite=Lax` cookies in the iframe.
 
 ## 4. Environment Variables
-- `VITE_API_URL`: The URL of the Code Provider Backend.
-- `VITE_WORKER_URL`: The URL of the Orchestrator (e.g., `https://preview.yourdomain.com`).
+- `VITE_API_URL`: The URL of the Code Provider Backend (Port 3000).
+- `VITE_WORKER_URL`: The URL of the Orchestrator (Port 3001).
