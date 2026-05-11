@@ -68,6 +68,9 @@ kind load docker-image preview-worker:local --name ai-studio
 
 # 3. Kill the existing pod (K8s will recreate it with the new image)
 kubectl delete pods -l app=preview-worker -n preview
+
+# 4. restart the orchastrator-deployment
+k rollout restart deploy/orchestrator -n preview
 ```
 
 ## 7. Verification
