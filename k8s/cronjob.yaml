@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ttl-cleaner
+  namespace: preview
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-deleter
+  namespace: preview
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ttl-cleaner-binding
+  namespace: preview
+subjects:
+- kind: ServiceAccount
+  name: ttl-cleaner
+  namespace: preview
+roleRef:
+  kind: Role
+  name: pod-deleter
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: preview-pod-ttl-cleanup
+  namespace: preview
+spec:
+  schedule: "* * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: ttl-cleaner
+          restartPolicy: OnFailure
+          containers:
+          - name: cleanup
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # TTL Cutoff: 1800000ms (30 minutes)
+              CUTOFF=$(( $(date +%s%3N) - 1800000 ))
+              
+              kubectl get pods -n preview -l app=preview-worker -o=custom-columns=NAME:.metadata.name,TIME:.metadata.annotations.created-at --no-headers | \
+              while read name time; do
+                # Basic validation that time is a number
+                case $time in
+                    ''|*[!0-9]*) continue ;;
+                esac
+                
+                if [ "$time" -lt "$CUTOFF" ]; then
+                  echo "Deleting expired pod: $name"
+                  kubectl delete pod -n preview "$name" --wait=false
+                fi
+              done

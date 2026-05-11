@@ -1,0 +1,17 @@
+{
+  "name": "ai-studio-orchestrator",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^0.21.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^3.0.5",
+    "ioredis": "^5.10.1"
+  }
+}
