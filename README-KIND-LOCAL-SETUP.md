@@ -17,10 +17,10 @@ kind create cluster --name ai-studio --config kind-config.yaml
 Build and load the local images into the KIND nodes:
 ```bash
 # Build Worker
-docker build -t preview-worker:local ./preview-worker
+docker build --no-cache -t preview-worker:local ./preview-worker
 
 # Build Orchestrator
-docker build -t orchestrator:local ./orchestrator
+docker build --no-cache -t orchestrator:local ./orchestrator
 
 # Load into KIND (IMPORTANT: This makes images available to the cluster)
 kind load docker-image preview-worker:local --name ai-studio

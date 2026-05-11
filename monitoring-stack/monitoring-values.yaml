@@ -1,0 +1,19 @@
+prometheus:
+  prometheusSpec:
+    additionalPrometheusRules:
+      - name: preview-system-alerts
+        groups:
+          - name: oomkill-alerts
+            rules:
+              - alert: PodOOMKilled
+                expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled", namespace="preview"} == 1
+                for: 1m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Preview Pod {{ $labels.pod }} OOMKilled"
+                  description: "Pod {{ $labels.pod }} in namespace 'preview' was terminated due to OutOfMemory. Current limit might be too low."
+
+grafana:
+  adminPassword: "admin123" # Change this for production!
+

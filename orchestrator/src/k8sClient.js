@@ -77,7 +77,9 @@ async function createPreviewPod(sessionId, projectId) {
         env: [
           { name: 'AUTH_TOKEN', value: AUTH_TOKEN },
           { name: 'WORKSPACE', value: '/workspace' },
-          { name: 'NODE_OPTIONS', value: '--max-old-space-size=3072' },
+          //******************************** */
+          //imp part 
+          { name: 'NODE_OPTIONS', value: '--max-old-space-size=800' },
           { name: 'RUNTIME', value: process.env.RUNTIME || 'gke' },
           {
             name: 'POD_NAME',
@@ -88,9 +90,11 @@ async function createPreviewPod(sessionId, projectId) {
             }
           }
         ],
+        //******************************** */
+        //imp part
         resources: {
-          requests: { memory: '3Gi', cpu: '1000m' },
-          limits:   { memory: '4Gi', cpu: '1000m' }
+          requests: { memory: '1Gi', cpu: '500m' },
+          limits: { memory: '2Gi', cpu: '1000m' }
         },
 
         // Readiness probe: k8s will not send traffic until this returns 200
