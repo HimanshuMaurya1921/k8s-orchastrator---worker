@@ -77,11 +77,10 @@ gcloud container clusters get-credentials $CLUSTER_NAME --region $REGION
 # 1. Create Namespace
 kubectl apply -f k8s/namespace.yaml
 
-# 2. Create Auth Secret
-export AUTH_TOKEN=$(openssl rand -hex 32)
-kubectl create secret generic preview-worker-secret \
-  --from-literal=auth-token=$AUTH_TOKEN \
-  --namespace=preview
+# 2. Apply ConfigMap and Secret
+# NOTE: In production, do not commit k8s/secret.yaml. Use a secure method like HashiCorp Vault, Google Secret Manager, or SOPS.
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/secret.yaml
 
 # 3. Apply RBAC, Network Policy, and Redis
 kubectl apply -f k8s/rbac.yaml
@@ -101,12 +100,13 @@ The system is optimized for high-density Next.js workloads. We recommend a "burs
 - **Storage**: 2Gi `emptyDir` (Memory) for high-speed workspace I/O.
 
 ## 7. Production Tuning (Environment Variables)
-For production workloads, you must tune the lifecycle and timeout settings in the Orchestrator deployment:
+For production workloads, you must tune the lifecycle and timeout settings in the `k8s/configmap.yaml`:
 
 - **`TERMINATION_GRACE_PERIOD_SECONDS=30`**: Essential to prevent HMR disconnects or refresh-loop pod kills.
 - **`JANITOR_PULSE_INTERVAL_MS=10000`**: Balance between cleanup speed and Redis load.
 - **`BOOT_TIMEOUT_MS=90000`**: High value recommended for GKE to account for image pulls and cold starts.
 - **`SESSION_TTL_SECONDS=1800`**: Controls how long inactive session metadata persists in Redis.
+- **`MAX_PREVIEW_PODS=40`**: Crucial safety limit to prevent cluster exhaustion during traffic spikes.
 
 ### 6.1 Session Affinity (Sticky Sessions)
 The Orchestrator uses a `preview-worker-id` cookie to route Next.js assets to the correct pod.

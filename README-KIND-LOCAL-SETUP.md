@@ -16,10 +16,10 @@ kind create cluster --config kind-config.yaml --name ai-studio
 ## 3. Image Preparation
 ```bash
 # Build the worker image
-docker build -t preview-worker:local ./preview-worker
+docker build --no-cache -t preview-worker:local ./preview-worker
 
 # Build the orchestrator image
-docker build -t orchestrator:local ./orchestrator
+docker build --no-cache -t orchestrator:local ./orchestrator
 
 # Load images into Kind
 kind load docker-image preview-worker:local --name ai-studio
@@ -35,9 +35,8 @@ kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/redis.yaml
 kubectl apply -f k8s/cronjob.yaml
 
-kubectl create secret generic preview-worker-secret \
-  --from-literal=auth-token=local-dev-token \
-  -n preview
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/secret.yaml
   
 kubectl apply -f k8s/network-policy.yaml
 kubectl apply -f k8s/orchestrator-deployment.yaml
@@ -45,10 +44,11 @@ kubectl apply -f k8s/orchestrator-deployment.yaml
 ```
 
 ## 5. Tuning the Lifecycle (Senior Tips)
-You can modify the session behavior by editing the orchestrator deployment or using a local `.env` file for the orchestrator:
+You can modify the session behavior by editing the `k8s/configmap.yaml`:
 
 - **`TERMINATION_GRACE_PERIOD_SECONDS=30`**: Increase this if you find yourself losing pods too quickly during development refreshes.
 - **`JANITOR_PULSE_INTERVAL_MS=10000`**: Frequency of the background cleanup check.
+- **`MAX_PREVIEW_PODS=40`**: The safety limit for total concurrent pods in the local cluster.
 
 ### Monitoring Lifecycle Events
 Watch the orchestrator logs to see the "Graceful Janitor" in action:

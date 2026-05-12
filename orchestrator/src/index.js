@@ -30,7 +30,7 @@ module.exports = function () {
       }
       await sessionManager.reconcile(activeWorkerIds);
     } catch (err) {
-      console.error('[Orchestrator] Reconciliation failed:', err.message);
+      console.error(`[Orchestrator][${process.env.POD_NAME || 'local'}] Reconciliation failed:`, err.message);
     }
   })();
 
@@ -47,7 +47,7 @@ module.exports = function () {
       // Senior Fix: If session was pending termination, cancel it!
       await sessionManager.confirmSession(existing.workerId);
 
-      console.log(`[Orchestrator] Existing session found for ${sessionKey}. Verifying health...`);
+      console.log(`[Orchestrator][${process.env.POD_NAME || 'local'}] Existing session found for ${sessionKey}. Verifying health...`);
       try {
         const isRunning = await backend.isWorkerRunning(existing.workerId);
         if (!isRunning) throw new Error('Worker not running');
@@ -60,7 +60,7 @@ module.exports = function () {
         });
 
         if (injectRes.ok) {
-          console.log(`[Orchestrator] Warm update for ${existing.workerId} took ${Date.now() - injectStart}ms`);
+          console.log(`[Orchestrator][${process.env.POD_NAME || 'local'}] Warm update for ${existing.workerId} took ${Date.now() - injectStart}ms`);
           return res.json({
             workerId: existing.workerId,
             previewUrl: `http://localhost:${process.env.WORKER_PORT || 3001}/api/preview/proxy/${existing.workerId}/`,
@@ -68,7 +68,7 @@ module.exports = function () {
           });
         }
       } catch (err) {
-        console.warn(`[Orchestrator] Session health check failed for ${existing.workerId}: ${err.message}`);
+        console.warn(`[Orchestrator][${process.env.POD_NAME || 'local'}] Session health check failed for ${existing.workerId}: ${err.message}`);
         // Senior Fix: Don't just delete from Redis, kill the pod too!
         try {
           if (IS_GKE) await backend.deletePreviewPod(existing.workerId);
@@ -130,7 +130,7 @@ module.exports = function () {
       });
 
     } catch (err) {
-      console.error('[Start] Error:', err.message);
+      console.error(`[Orchestrator][${process.env.POD_NAME || 'local'}] Start Error:`, err.message);
       if (!res.headersSent) res.status(500).json({ error: err.message });
     }
   });
@@ -155,7 +155,7 @@ module.exports = function () {
       });
 
       if (!injectRes.ok) throw new Error('Inject failed');
-      console.log(`[Orchestrator] Code patch for ${workerId} took ${Date.now() - injectStart}ms`);
+      console.log(`[Orchestrator][${process.env.POD_NAME || 'local'}] Code patch for ${workerId} took ${Date.now() - injectStart}ms`);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -173,37 +173,47 @@ module.exports = function () {
     }
   };
 
-  // ─── The Graceful Janitor ───────────────────────────────────────────────────
-  // Periodically checks for sessions whose grace period has expired
+  // ─── The Graceful Janitor (Distributed) ─────────────────────────────────────────
+  // Periodically checks for sessions whose grace period has expired.
+  // Uses a Redis lock to ensure only one orchestrator instance is the "Janitor".
   setInterval(async () => {
+    const lockKey = 'janitor:lock';
+    const lockToken = crypto.randomBytes(16).toString('hex');
+    const podName = process.env.POD_NAME || 'local';
+    
     try {
+      // Try to acquire the Janitor lock for 30 seconds (longer than PULSE_INTERVAL)
+      const acquired = await sessionManager.redis.set(lockKey, lockToken, 'NX', 'EX', 30);
+      
+      if (!acquired) {
+        // Another instance is currently the Janitor. Skip this pulse.
+        return;
+      }
+
       const terminating = await sessionManager.getTerminatingSessions();
 
-      // Heartbeat log: only log if there's action to keep logs clean
       if (terminating.length > 0) {
-        console.log(`[Janitor] Pulse: Checking ${terminating.length} terminating sessions...`);
+        console.log(`[Janitor][${podName}] Pulse (Leader): Checking ${terminating.length} terminating sessions...`);
       }
 
       for (const session of terminating) {
         const expired = await sessionManager.isGraceExpired(session.workerId);
         if (expired) {
-          console.log(`[Janitor] 💀 Grace period expired for ${session.workerId}. Terminating pod...`);
+          console.log(`[Janitor][${podName}] 💀 Grace period expired for ${session.workerId}. Terminating pod...`);
           try {
             if (IS_GKE) await backend.deletePreviewPod(session.workerId);
             else await backend.deleteLocalWorker(session.workerId);
-            console.log(`[Janitor] ✅ Pod ${session.workerId} deleted successfully.`);
+            console.log(`[Janitor][${podName}] ✅ Pod ${session.workerId} deleted successfully.`);
           } catch (deleteErr) {
-            console.error(`[Janitor] ❌ Failed to delete pod ${session.workerId}:`, deleteErr.message);
+            console.error(`[Janitor][${podName}] ❌ Failed to delete pod ${session.workerId}:`, deleteErr.message);
           }
           await sessionManager.deleteSession(session.workerId);
-        } else {
-          console.log(`[Janitor] ⏳ ${session.workerId} is still in grace period.`);
         }
       }
     } catch (err) {
-      console.error("[Janitor] Critical error in background task:", err.message);
+      console.error(`[Janitor][${podName}] Critical error in background task:`, err.message);
     }
-  }, PULSE_INTERVAL); // Dynamic check interval
+  }, PULSE_INTERVAL);
 
   router.delete('/:workerId', cleanupHandler);
   router.post('/:workerId/delete', cleanupHandler);
@@ -232,8 +242,36 @@ module.exports = function () {
     ws: false, // Handled globally in server.js
     logLevel: 'silent',
     onError: (err, req, res) => {
+      // Catch transient connection issues during project swaps
+      const isRetryable = err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET';
+      
+      if (isRetryable && !res.headersSent) {
+        // 1. Handle API/Health requests (Expect JSON)
+        // If the frontend is polling health, we MUST return JSON, even if the worker is busy.
+        if (req.url.includes('/__health') || req.headers.accept?.includes('application/json')) {
+          return res.status(200).json({ 
+            status: 'booting', 
+            ready: false,
+            note: 'Orchestrator proxying is waiting for worker port to open.'
+          });
+        }
+
+        // 2. Handle UI/HTML requests (Expect HTML)
+        if (req.headers.accept?.includes('text/html')) {
+          console.log(`[PreviewProxy][${process.env.POD_NAME || 'local'}] Worker busy or booting (${err.code}), sending sync helper...`);
+          return res.status(200).send(`
+            <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #64748b; background: #f8fafc;">
+              <div style="width: 24px; height: 24px; border: 2px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.6s linear infinite; margin-bottom: 12px;"></div>
+              <p style="font-size: 14px; margin: 0;">Syncing changes...</p>
+              <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+              <script>setTimeout(() => location.reload(), 1000)</script>
+            </div>
+          `);
+        }
+      }
+
       if (err.code !== 'ECONNRESET') {
-        console.error(`[PreviewProxy Error]`, err.message);
+        console.error(`[PreviewProxy Error][${process.env.POD_NAME || 'local'}]`, err.message);
       }
       if (res && !res.headersSent && res.status) {
         res.status(502).send(`Worker communication failed: ${err.message}`);
@@ -252,7 +290,7 @@ module.exports = function () {
     const session = await sessionManager.getSessionByWorker(workerId);
 
     if (!session) {
-      console.warn(`[Proxy] Session NOT FOUND for workerId: ${workerId}`);
+      console.warn(`[Proxy][${process.env.POD_NAME || 'local'}] Session NOT FOUND for workerId: ${workerId}`);
       return res.status(404).send('Preview not found or expired');
     }
 

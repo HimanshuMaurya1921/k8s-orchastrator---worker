@@ -4,7 +4,7 @@ metadata:
   name: orchestrator
   namespace: preview
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: orchestrator
@@ -22,22 +22,16 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: preview-config
+        - secretRef:
+            name: preview-worker-secret
         env:
-        - name: RUNTIME
-          value: "gke"
-        - name: WORKER_IMAGE
-          value: "preview-worker:local"
-        - name: REDIS_HOST
-          value: "redis"
-        - name: REDIS_PORT
-          value: "6379"
-        - name: SESSION_TTL_SECONDS
-          value: "1800"
-        - name: WORKER_AUTH_TOKEN
+        - name: POD_NAME
           valueFrom:
-            secretKeyRef:
-              name: preview-worker-secret
-              key: auth-token
+            fieldRef:
+              fieldPath: metadata.name
         resources:
           requests:
             memory: "256Mi"

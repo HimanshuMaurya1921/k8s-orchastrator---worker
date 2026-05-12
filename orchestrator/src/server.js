@@ -4,9 +4,11 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 
-// Generate a shared secret for worker-orchestrator communication if not provided
+// Senior Fix: Standardize auth token for multi-instance consistency. 
+// Use a stable fallback if not provided via environment (K8s Secret).
 if (!process.env.WORKER_AUTH_TOKEN) {
-  process.env.WORKER_AUTH_TOKEN = crypto.randomBytes(32).toString('hex');
+  console.warn('[Orchestrator] CRITICAL: WORKER_AUTH_TOKEN not provided. Falling back to development token.');
+  process.env.WORKER_AUTH_TOKEN = 'local-dev-token-do-not-use-in-prod';
 }
 
 const app = express();
@@ -37,7 +39,7 @@ const mainProxy = createProxyMiddleware({
     const session = await orchestrator.getSessionByWorkerId(workerId);
     if (session) {
       if (req.headers.upgrade === 'websocket') {
-        console.log(`[Proxy] WebSocket upgrade for worker: ${workerId} -> ${session.workerHost}:${session.workerPort}`);
+        console.log(`[MainProxy][${process.env.POD_NAME || 'local'}] WebSocket upgrade for worker: ${workerId} -> ${session.workerHost}:${session.workerPort}`);
       }
       return `http://${session.workerHost}:${session.workerPort}`;
     }
@@ -53,8 +55,18 @@ const mainProxy = createProxyMiddleware({
     const isRetryable = err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET';
     
     if (isRetryable && !res.headersSent) {
+      // 1. Handle API/Health requests (Expect JSON)
+      if (req.url.includes('/__health') || req.headers.accept?.includes('application/json')) {
+        return res.status(200).json({ 
+          status: 'booting', 
+          ready: false,
+          note: 'Orchestrator proxying is waiting for worker port to open.'
+        });
+      }
+
+      // 2. Handle UI/HTML requests (Expect HTML)
       if (req.headers.accept?.includes('text/html')) {
-        console.log(`[Proxy] Worker busy or restarting (${err.code}), sending sync helper...`);
+        console.log(`[MainProxy][${process.env.POD_NAME || 'local'}] Worker busy or restarting (${err.code}), sending sync helper...`);
         return res.status(200).send(`
           <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #64748b; background: #f8fafc;">
             <div style="width: 24px; height: 24px; border: 2px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.6s linear infinite; margin-bottom: 12px;"></div>
@@ -67,7 +79,7 @@ const mainProxy = createProxyMiddleware({
     }
 
     if (err.code !== 'ECONNRESET') {
-      console.error('[MainProxy Error]', err.message);
+      console.error(`[MainProxy Error][${process.env.POD_NAME || 'local'}]`, err.message);
     }
     if (res && !res.headersSent && res.status) {
       res.status(502).send('Worker communication failed');
@@ -104,7 +116,7 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.WORKER_PORT || 3001;
 const server = app.listen(PORT, () => {
-  console.log(`[Worker Orchestrator] Running on port ${PORT} (${process.env.RUNTIME || 'local'} mode)`);
+  console.log(`[Worker Orchestrator][${process.env.POD_NAME || 'local'}] Running on port ${PORT} (${process.env.RUNTIME || 'local'} mode)`);
 });
 
 // Handle WebSocket upgrades for HMR using the singleton proxy
@@ -114,7 +126,7 @@ server.on('upgrade', (req, socket, head) => {
 
 // Graceful shutdown
 const shutdown = () => {
-  console.log('[Orchestrator] Shutting down...');
+  console.log(`[Orchestrator][${process.env.POD_NAME || 'local'}] Shutting down...`);
   server.close(() => {
     process.exit(0);
   });

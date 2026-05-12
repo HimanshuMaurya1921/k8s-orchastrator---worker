@@ -75,12 +75,22 @@ async function createPreviewPod(sessionId, projectId) {
         imagePullPolicy: 'IfNotPresent',
         ports: [{ containerPort: 3000 }],
         env: [
-          { name: 'AUTH_TOKEN', value: AUTH_TOKEN },
-          { name: 'WORKSPACE', value: '/workspace' },
-          //******************************** */
-          //imp part 
-          { name: 'NODE_OPTIONS', value: '--max-old-space-size=800' },
-          { name: 'RUNTIME', value: process.env.RUNTIME || 'gke' },
+          {
+            name: 'AUTH_TOKEN',
+            valueFrom: { secretKeyRef: { name: 'preview-worker-secret', key: 'WORKER_AUTH_TOKEN' } }
+          },
+          {
+            name: 'WORKSPACE',
+            valueFrom: { configMapKeyRef: { name: 'preview-config', key: 'WORKSPACE' } }
+          },
+          {
+            name: 'NODE_OPTIONS',
+            valueFrom: { configMapKeyRef: { name: 'preview-config', key: 'NODE_OPTIONS' } }
+          },
+          {
+            name: 'RUNTIME',
+            valueFrom: { configMapKeyRef: { name: 'preview-config', key: 'RUNTIME' } }
+          },
           {
             name: 'POD_NAME',
             valueFrom: {

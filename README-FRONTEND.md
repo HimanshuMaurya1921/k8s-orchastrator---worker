@@ -1,61 +1,107 @@
-# Frontend Integration Guide: AI Studio Preview System (Refactored)
+# 🚀 Frontend Integration Guide: AI Studio Preview System
 
-This document outlines the mandatory requirements for the frontend to correctly interface with the K8s-based Preview Worker system.
+Welcome to the frontend integration documentation for the AI Studio Preview System. This guide provides the mandatory technical requirements and architectural concepts needed to interface with our Kubernetes-backed ephemeral compute plane.
 
-## 1. Core Concepts
-The system uses an **Orchestrator** to manage ephemeral Next.js pods. To achieve high performance, we use a **"Warm Update"** strategy where a single pod is reused for a specific user.
+Our infrastructure spins up isolated, high-performance Next.js environments ("Workers") on the fly. To ensure a seamless user experience, the frontend must handle session persistence, intelligent polling, and graceful cleanup.
 
-## 2. Mandatory Implementation Requirements
+---
 
-### 2.1 Persistent User Identity
-Every user **MUST** have a stable `userId` persisted in `localStorage`. This allows the Orchestrator to route them back to their existing "Warm" pod, drastically reducing cold start times.
+## 🏗️ 1. Core Architecture: The "Warm Update" Strategy
 
+The system uses an **Orchestrator** to proxy requests and manage the lifecycle of ephemeral Next.js pods. 
+
+To achieve near-instantaneous code updates, we utilize a **Warm Update** strategy:
+1. **Cold Start**: The first time a user previews code, a new pod is provisioned.
+2. **Warm Update**: Subsequent code changes are injected into the *existing* pod, avoiding the overhead of starting a new Node process.
+
+---
+
+## ⚙️ 2. Mandatory Integration Requirements
+
+### 2.1 Persistent User Identity (Critical)
+To route a user back to their "Warm" pod across page reloads, the frontend **MUST** generate and persist a stable `userId`.
+
+**Implementation:**
 ```javascript
-// Recommended stable ID generation
-let userId = localStorage.getItem('preview_user_id');
-if (!userId) {
-  userId = `user-${Math.random().toString(36).substring(2, 11)}`;
-  localStorage.setItem('preview_user_id', userId);
-}
+// Retrieve or generate a stable UUID for the session
+const getStableUserId = () => {
+  let userId = localStorage.getItem('preview_user_id');
+  if (!userId) {
+    // Generate a unique ID (consider using a UUID library in production)
+    userId = `user-${Math.random().toString(36).substring(2, 11)}`;
+    localStorage.setItem('preview_user_id', userId);
+  }
+  return userId;
+};
 ```
 
-### 2.2 The `/start` Endpoint
-Always use the `/start` endpoint for both the initial preview and subsequent updates. The Orchestrator handles the reuse logic internally.
-- **URL**: `${WORKER_URL}/api/preview/start`
-- **Method**: `POST`
-- **Body**: `{ projectId, userId, files }`
+### 2.2 The Initialization & Update API
+The frontend interacts exclusively with the Orchestrator's `/start` endpoint. The Orchestrator handles the complex logic of deciding whether to provision a new pod or inject into an existing one.
 
-### 2.3 Synchronized Timeouts (Critical)
-The Frontend **MUST** align its internal timeouts with the Backend's 90-second boot window. 
-- **Fail-safe Timeout**: If the pod hasn't responded within **90 seconds**, show a "Retry" state.
-- **Polling Interval**: Poll the `/__health` endpoint every 1s for a maximum of **90 attempts**.
+*   **Endpoint**: `POST ${WORKER_URL}/api/preview/start`
+*   **Payload**:
+    ```typescript
+    interface PreviewStartPayload {
+      projectId: string; // Unique identifier for the project
+      userId: string;    // The stable user identity (from 2.1)
+      files: {           // Key-value map of file paths to content
+        [filePath: string]: string; 
+      };
+    }
+    ```
 
-### 2.4 Reliable Cleanup with `sendBeacon`
-To ensure Kubernetes resources are not leaked when a user closes a tab, the frontend **MUST** implement a cleanup signal using `navigator.sendBeacon`. This is more reliable than standard `fetch` during page unmount.
+### 2.3 Synchronized Timeouts & Polling
+Kubernetes pod provisioning takes time. The frontend **MUST** align its internal timeouts with the backend's strict 90-second boot window.
 
+1. **The Polling Loop**: Once the `/start` API returns a `workerId`, poll the health endpoint (`GET ${WORKER_URL}/api/preview/proxy/${workerId}/__health`) every 1000ms.
+2. **The 90-Second Fail-Safe**: If the pod hasn't returned `{ "status": "ready" }` within 90 attempts (90 seconds), assume a critical failure and render a "Retry" state.
+
+### 2.4 Reliable Resource Cleanup (`sendBeacon`)
+Kubernetes resources are expensive. When a user closes the preview tab, the frontend **MUST** explicitly notify the Orchestrator to begin the termination process. 
+
+Because standard `fetch()` calls are often cancelled during page unload, you must use `navigator.sendBeacon`.
+
+**React Hooks Example:**
 ```javascript
 useEffect(() => {
   const cleanup = () => {
     if (workerId) {
+      // sendBeacon is non-blocking and guaranteed to fire on tab close
       const url = `${apiBase}/api/preview/${workerId}/delete`;
       navigator.sendBeacon(url);
     }
   };
+
   window.addEventListener('beforeunload', cleanup);
   return () => {
     window.removeEventListener('beforeunload', cleanup);
-    cleanup();
+    cleanup(); // Also fire on React unmount
   };
 }, [workerId]);
 ```
 
-## 3. The Lifecycle States
+---
 
-1.  **Booting**: Frontend shows a "Syncing changes..." overlay.
-2.  **Ready**: The worker's `/__health` returns `status: "ready"`. Only then should the iframe be shown.
-3.  **Warm Update**: If the user modifies code, the frontend sends the new files to `/start`. The Orchestrator injects the diff into the *existing* pod, resulting in near-instant updates.
-4.  **Grace Period**: When the tab is closed, the Orchestrator starts a **30s grace timer**. If the user returns within this window, the termination is cancelled.
+## 🔄 3. Understanding Lifecycle States
 
-## 4. Error Handling
-- **503 Cluster Full**: The cluster has reached `MAX_PREVIEW_PODS`. Show a "Capacity Reached" message with a 15s retry suggestion.
-- **502 Worker Error**: Communication with the sandbox failed. Trigger a silent retry (Cold Start) by clearing the local `workerId`.
+Your UI should gracefully reflect the following system states:
+
+1. 🟡 **Booting / Syncing**: Render a "Syncing changes..." overlay or spinner. Do not render the `<iframe>` yet.
+2. 🟢 **Ready**: The `/__health` endpoint returns `status: "ready"`. You may now reveal the `<iframe>` pointing to the worker proxy URL.
+3. 🔵 **Grace Period**: If a user accidentally closes the tab, the backend initiates a **30-second Grace Timer**. If the user returns and triggers `/start` before the timer expires, the termination is cancelled, and they are instantly reconnected to their warm pod.
+
+---
+
+## ⚠️ 4. Standardized Error Handling
+
+The Orchestrator provides specific HTTP status codes. The frontend must handle them gracefully:
+
+| HTTP Status | Condition | Required Frontend Action |
+| :--- | :--- | :--- |
+| **`503 Service Unavailable`** | **Cluster Capacity Reached**. The system has hit `MAX_PREVIEW_PODS`. | Display a "System at Capacity" warning. Suggest the user retry in 15-30 seconds. |
+| **`502 Bad Gateway`** | **Worker Unreachable**. The pod may have crashed or was reaped by the Janitor. | **Silent Recovery**: Automatically clear the local `workerId` and re-trigger a cold start by calling `/start` again. |
+| **`200 OK` (Expired)** | The Orchestrator returns `{"status": "expired"}`. | Same as 502. The session was purged from Redis. Clear state and retry. |
+
+---
+
+*Note: For a reference implementation of these patterns in React, consult the `usePreview.js` hook provided in the boilerplate.*

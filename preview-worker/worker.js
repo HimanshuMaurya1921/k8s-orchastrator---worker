@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 const NEXT_PORT = process.env.NEXT_PORT || 3001;
 const WORKSPACE = process.env.WORKSPACE || path.join(os.tmpdir(), `ai-studio-worker`);
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'local-dev-token';
-const VERSION = "1.0.2"; 
+const VERSION = "1.0.3"; 
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let nextReady = false;
@@ -21,6 +21,11 @@ let nextProc;
 
 // ─── Next.js Process Management ───────────────────────────────────────────────
 function startNextServer(workDir) {
+  if (nextProc) {
+    console.log('[Worker] Next.js is already running. Skipping start.');
+    return;
+  }
+
   const nextBin = path.join(workDir, 'node_modules', '.bin', 'next');
   if (!fsSync.existsSync(nextBin)) {
     console.error(`[Worker] Next.js binary NOT FOUND at ${nextBin}`);
@@ -53,6 +58,7 @@ function startNextServer(workDir) {
   nextProc.on('close', (code) => {
     console.log(`[Worker] Next.js process exited with code ${code}`);
     nextReady = false;
+    nextProc = null; // Important: Clear the ref so we can restart it
   });
 }
 
@@ -308,8 +314,9 @@ export default function PreviewBadge() {
       console.log(`[Worker v${VERSION}] Injected ${Object.keys(flatFiles).length} files (${(totalSize / 1024).toFixed(2)}KB)`);
       logMemory('POST_INJECTION');
 
-      // 4. If we wiped, we need to restart the server
-      if (wipe) {
+      // 4. Ensure Next.js is running (or restart if wipe was true)
+      // Senior Fix: Always start if nextProc is null, regardless of wipe.
+      if (wipe || !nextProc) {
         startNextServer(workDir);
       }
 
@@ -329,7 +336,7 @@ export default function PreviewBadge() {
 
   const server = app.listen(PORT, () => {
     console.log(`[Worker v${VERSION}] Listening on port ${PORT}`);
-    startNextServer(WORKSPACE);
+    // Senior Fix: Do NOT start Next.js here. Wait for the first __inject call.
   });
 
   console.log(`[Worker v${VERSION}] Startup complete. Waiting for requests...`);
