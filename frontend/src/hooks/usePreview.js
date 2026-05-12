@@ -49,6 +49,7 @@ export function usePreview({ projectId, files, apiBase = '', onReady }) {
 
     // Set loading immediately to show the overlay even during the debounce period
     setLoading(true);
+    console.log('[usePreview] Debounce finished, starting startOrUpdate...');
 
     const startOrUpdate = async () => {
       try {
@@ -131,6 +132,7 @@ export function usePreview({ projectId, files, apiBase = '', onReady }) {
         
         setPreviewUrl(freshUrl);
         setLoading(false);
+        console.log('[usePreview] Update complete, previewUrl set:', freshUrl);
         if (onReady) onReady(freshUrl, { warm: isWarm });
       } catch (err) {
         setError(err.message);

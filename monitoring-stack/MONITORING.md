@@ -52,7 +52,7 @@ grafana:
 kubectl create namespace monitoring
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
-  -f monitoring-values.yaml
+  -f ./monitoring-stack/monitoring-values.yaml
 ```
 
 ---

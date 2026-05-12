@@ -29,7 +29,19 @@ kind load docker-image orchestrator:local --name ai-studio
 ## 4. Deployment
 ```bash
 # Deploy Redis, Orchestrator, and Frontend
-kubectl apply -k k8s/overlays/local
+# kubectl apply -k k8s/overlays/local
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/rbac.yaml
+kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/cronjob.yaml
+
+kubectl create secret generic preview-worker-secret \
+  --from-literal=auth-token=local-dev-token \
+  -n preview
+  
+kubectl apply -f k8s/network-policy.yaml
+kubectl apply -f k8s/orchestrator-deployment.yaml
+
 ```
 
 ## 5. Tuning the Lifecycle (Senior Tips)

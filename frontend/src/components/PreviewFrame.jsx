@@ -1,10 +1,30 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePreview } from '../hooks/usePreview';
 
 export const PreviewFrame = ({ projectId, files, apiBase, onReady, className }) => {
   const { previewUrl, loading, error } = usePreview({ projectId, files, apiBase, onReady });
+  
+  // Senior Fix: Track if the iframe itself is still reloading the new URL
+  const [isReloading, setIsReloading] = useState(false);
+
+  // When usePreview starts an update, we mark the iframe as "about to reload"
+  useEffect(() => {
+    if (loading) {
+      console.log('[PreviewFrame] Orchestrator loading started, setting isReloading=true');
+      setIsReloading(true);
+    }
+  }, [loading]);
+
+  // Combined loading state: API is working OR browser is reloading the iframe
+  const showOverlay = loading || isReloading;
+
+  const handleIframeLoad = () => {
+    console.log('[PreviewFrame] IFrame onLoad event fired. Content is now ready.');
+    setIsReloading(false);
+  };
 
   if (error) {
+    console.error('[PreviewFrame] Error received:', error);
     return <div className={`p-4 bg-red-50 text-red-600 ${className || ''}`}>Preview Error: {error}</div>;
   }
 
@@ -39,7 +59,7 @@ export const PreviewFrame = ({ projectId, files, apiBase, onReady, className }) 
 
       {/* Iframe / Content Container */}
       <div className="relative flex-1 w-full bg-gray-50">
-        {loading && (
+        {showOverlay && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-white/80 backdrop-blur-md transition-all duration-500">
             <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4 shadow-sm"></div>
             <p className="text-gray-800 font-semibold tracking-tight">Syncing changes...</p>
@@ -50,6 +70,7 @@ export const PreviewFrame = ({ projectId, files, apiBase, onReady, className }) 
           <iframe
             key={projectId}
             src={previewUrl}
+            onLoad={handleIframeLoad}
             className="w-full h-full border-0"
             title="Live Preview"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"

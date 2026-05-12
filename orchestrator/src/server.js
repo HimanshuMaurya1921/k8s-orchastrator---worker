@@ -24,10 +24,24 @@ app.use('/api/preview', orchestrator.router);
 const mainProxy = createProxyMiddleware({
   target: 'http://placeholder', // Dynamic target via router
   router: async (req) => {
-    const workerId = req.cookies['preview-worker-id'] || req.headers['x-preview-worker-id'];
+    // Manual cookie parsing for WebSocket upgrades (Express middleware doesn't run on upgrade)
+    let workerId = req.cookies?.['preview-worker-id'] || req.headers['x-preview-worker-id'];
+    
+    if (!workerId && req.headers.cookie) {
+      const match = req.headers.cookie.match(/preview-worker-id=([^;]+)/);
+      if (match) workerId = match[1];
+    }
+
     if (!workerId) return undefined;
+
     const session = await orchestrator.getSessionByWorkerId(workerId);
-    return session ? `http://${session.workerHost}:${session.workerPort}` : undefined;
+    if (session) {
+      if (req.headers.upgrade === 'websocket') {
+        console.log(`[Proxy] WebSocket upgrade for worker: ${workerId} -> ${session.workerHost}:${session.workerPort}`);
+      }
+      return `http://${session.workerHost}:${session.workerPort}`;
+    }
+    return undefined;
   },
   changeOrigin: true,
   ws: true,
