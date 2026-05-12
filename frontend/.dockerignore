@@ -1,6 +1,9 @@
 node_modules
-template/node_modules
+dist
+.env
+.env.local
 .git
 .gitignore
+README.md
 Dockerfile
 .dockerignore

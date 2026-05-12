@@ -1,13 +1,13 @@
-FROM node:18-slim
+FROM node:20-alpine
 
-# Install basic tools
-RUN apt-get update && apt-get install -y curl tar procps && rm -rf /var/lib/apt/lists/*
+# Install basic tools for Next.js and process management
+RUN apk add --no-cache curl tar procps
 
 WORKDIR /app
 
 # Copy worker server files
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Copy the Next.js template
 COPY template ./template
@@ -15,7 +15,7 @@ COPY template ./template
 # Pre-install Next.js dependencies inside the template
 # This runs during image build so workers don't npm install at runtime
 WORKDIR /app/template
-RUN npm install
+RUN npm ci
 
 # Go back to app root
 WORKDIR /app
@@ -24,8 +24,6 @@ WORKDIR /app
 COPY worker.js ./
 
 # Create workspace directory
-# In GKE this gets replaced by an emptyDir volume
-# Locally this is just a regular folder
 RUN mkdir -p /workspace
 
 EXPOSE 3000
